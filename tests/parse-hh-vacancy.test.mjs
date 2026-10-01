@@ -22,7 +22,9 @@ function vacancyPage({ fields = true, metadata = true, description = true } = {}
     })}</script>` : ''}
     </head><body>
     <div class="vacancy-title"><h1 data-qa="vacancy-title">SRE &amp; Observability</h1>
-      <span>${fields ? 'от 320&#8239;000 ₽ за месяц, на руки' : 'Уровень дохода не указан'}</span></div>
+      ${fields
+        ? '<div data-qa="vacancy-salary"><span>от <data value="320000">320&#8239;000</data> ₽ за месяц, <span>на руки</span></span></div>'
+        : '<span>Уровень дохода не указан</span>'}</div>
     ${fields ? `<a data-qa="vacancy-company-name" href="/employer/42">ООО&nbsp;Пример</a>
       <span data-qa="vacancy-experience">3–6 лет</span>
       <div data-qa="common-employment-text">Полная занятость</div>
@@ -84,6 +86,14 @@ test('сохраняет null для отсутствующих условий �
   }
   assert.deepEqual(vacancy.skills, []);
   assert.ok(vacancy.description);
+});
+
+// Диапазон и налоговую оговорку сохраняем целиком из отдельного блока зарплаты.
+test('сохраняет обе границы зарплаты и условие до вычета налогов', () => {
+  const html = vacancyPage().replace(/<div data-qa="vacancy-salary">.*?<\/div>/,
+    '<div data-qa="vacancy-salary"><span>от <data>300&nbsp;000</data> до <data>400&nbsp;000</data> ₽ за месяц, <span>до вычета налогов</span></span></div>');
+  const vacancy = parseVacancyPage(html, 'salary.html').vacancies[0];
+  assert.equal(vacancy.salary, 'от 300 000 до 400 000 ₽ за месяц, до вычета налогов');
 });
 
 // Отсутствие необязательных SEO-данных не должно мешать чтению самого объявления.

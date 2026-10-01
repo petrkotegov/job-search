@@ -94,7 +94,9 @@ export function parseVacancyPage(html, file, $ = load(html)) {
   const field = (qa) => normalizeText($(`[data-qa="${qa}"]`).first().text()) || null;
   const employer = $('[data-qa="vacancy-company-name"]').first();
   const employerHref = employer.attr('href');
-  const salaryText = normalizeText($('.vacancy-title').first().children('span').first().text());
+  const salaryNode = $('[data-qa="vacancy-salary"]').first();
+  const salaryText = normalizeText(salaryNode.length
+    ? salaryNode.text() : $('.vacancy-title').first().children('span').first().text());
   const salary = !salaryText || /уровень дохода не указан/i.test(salaryText) ? null : salaryText;
   const address = field('vacancy-view-raw-address') ?? field('vacancy-address-with-map');
   const workFormat = field('work-formats-text');
@@ -241,9 +243,11 @@ export async function parseFiles(files) {
     const isVacancy = $('[data-qa="vacancy-title"]').length
       || vacancyId($('link[rel="canonical"]').attr('href'))
       || vacancyId(singleFileMetadata(html).url);
-    pages.push(isVacancy
+    const page = isVacancy
       ? parseVacancyPage(html, file, $)
-      : parseSearchPage(html, file, $));
+      : parseSearchPage(html, file, $);
+    // Отделяем короткие строки результата от больших строк HTML, которые V8 может удерживать через подстроки.
+    pages.push(JSON.parse(JSON.stringify(page)));
   }
   return mergePages(pages);
 }
