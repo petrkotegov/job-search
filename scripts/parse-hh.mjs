@@ -20,24 +20,129 @@ function texts($, elements) {
   return [...new Set(elements.toArray().map((node) => normalizeText($(node).text())).filter(Boolean))];
 }
 
+// Извлекаем общий для выдачи и полных вакансий комментарий SingleFile.
+function singleFileMetadata(html) {
+  const metadata = html.match(/<!--\s*Page saved with SingleFile\b([\s\S]*?)-->/)?.[1] ?? '';
+  return {
+    url: metadata.match(/^\s*url:\s*(\S+)/m)?.[1] ?? null,
+    saved_date: metadata.match(/^\s*saved date:\s*(.+)/m)?.[1].trim() ?? null,
+  };
+}
+
+// Сохраняем абзацы и пункты описания, не склеивая строки и не разрывая inline-текст.
+function descriptionText(node) {
+  if (!node) return '';
+  if (node.type === 'text') return node.data;
+  if (['script', 'style', 'noscript'].includes(node.name)) return '';
+  if (node.name === 'br') return '\n';
+  const content = (node.children ?? []).map(descriptionText).join('');
+  if (node.name === 'li') return `\n- ${content.trim()}\n`;
+  if (['p', 'div', 'section', 'ul', 'ol', 'h1', 'h2', 'h3', 'h4', 'blockquote'].includes(node.name)) {
+    return `\n${content}\n`;
+  }
+  return content;
+}
+
+// JobPosting нужен только для даты и города; видимые условия и описание берём из DOM.
+function jobMetadata($, file, warnings) {
+  for (const node of $('script[type="application/ld+json"]').toArray()) {
+    try {
+      const data = JSON.parse($(node).text());
+      const job = (Array.isArray(data) ? data : [data]).find((item) => item?.['@type'] === 'JobPosting');
+      if (job) return job;
+    } catch {
+      warnings.push(`${file}: не удалось прочитать JSON-LD; доступные поля извлечены из HTML.`);
+    }
+  }
+  return {};
+}
+
+// Проверяем адрес страницы вакансии, включая региональные поддомены HH.
+function vacancyId(href) {
+  if (!href) return null;
+  try {
+    const url = new URL(href, 'https://hh.ru');
+    return /^https?:$/.test(url.protocol) && /(^|\.)hh\.ru$/i.test(url.hostname)
+      ? url.pathname.match(/^\/vacancy\/(\d+)\/?$/)?.[1] ?? null
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+// Разбираем одну полную вакансию; рекомендации и личные элементы страницы не включаем.
+export function parseVacancyPage(html, file, $ = load(html)) {
+  const metadata = singleFileMetadata(html);
+  const canonical = $('link[rel="canonical"]').attr('href');
+  const canonicalId = vacancyId(canonical);
+  const savedId = vacancyId(metadata.url);
+  const id = canonicalId ?? savedId;
+  const title = normalizeText($('[data-qa="vacancy-title"]').first().text());
+  const description = descriptionText($('[data-qa="vacancy-description"]').first()[0])
+    .replace(/[\u200B\uFEFF]/gu, '').split('\n').map(normalizeText).join('\n')
+    .replace(/\n{3,}/g, '\n\n').trim();
+  if (!id || !title || !description) {
+    throw new Error(`${file}: у полной вакансии нет ID, названия или описания; проверьте сохранённую страницу.`);
+  }
+  if (canonicalId && savedId && canonicalId !== savedId) {
+    throw new Error(`${file}: ID вакансии в canonical и SingleFile различаются.`);
+  }
+
+  // Не подменяем отсутствующую зарплату нулём; условия оставляем формулировками HH.
+  const warnings = [];
+  const job = jobMetadata($, file, warnings);
+  const field = (qa) => normalizeText($(`[data-qa="${qa}"]`).first().text()) || null;
+  const employer = $('[data-qa="vacancy-company-name"]').first();
+  const employerHref = employer.attr('href');
+  const salaryText = normalizeText($('.vacancy-title').first().children('span').first().text());
+  const salary = !salaryText || /уровень дохода не указан/i.test(salaryText) ? null : salaryText;
+  const address = field('vacancy-view-raw-address') ?? field('vacancy-address-with-map');
+  const workFormat = field('work-formats-text');
+  const vacancy = {
+    id,
+    url: `https://hh.ru/vacancy/${id}`,
+    title,
+    employer: normalizeText(employer.text()) || null,
+    employer_url: employerHref ? new URL(employerHref, metadata.url ?? 'https://hh.ru').href : null,
+    salary,
+    experience: field('vacancy-experience'),
+    location: job.jobLocation?.address?.addressLocality ?? null,
+    address,
+    employment: field('common-employment-text'),
+    hiring_format: field('vacancy-hiring-formats'),
+    schedule: field('work-schedule-by-days-text'),
+    working_hours: field('working-hours-text'),
+    work_format: workFormat,
+    skills: texts($, $('[data-qa="skills-element"]')),
+    description,
+    published_at: job.datePosted ?? null,
+    valid_through: job.validThrough ?? null,
+    sources: [{ file, position: 1 }],
+  };
+  return {
+    source: { file, ...metadata, page_type: 'vacancy', heading: title, card_count: 1 },
+    vacancies: [vacancy],
+    warnings,
+  };
+}
+
 // Разбираем сохранённую выдачу: HTML обрабатывается локально и не исполняется.
-export function parseSearchPage(html, file) {
-  const $ = load(html);
+export function parseSearchPage(html, file, $ = load(html)) {
   const cards = $('[data-qa="vacancy-serp__vacancy"]');
   if (!cards.length) {
     throw new Error(`${file}: карточки выдачи HH не найдены; проверьте сохранённую страницу.`);
   }
 
   // Метаданные SingleFile сохраняют адрес поиска и время создания копии.
-  const metadata = html.match(/<!--\s*Page saved with SingleFile\b([\s\S]*?)-->/)?.[1] ?? '';
-  const sourceUrl = metadata.match(/^\s*url:\s*(\S+)/m)?.[1] ?? null;
+  const metadata = singleFileMetadata(html);
+  const sourceUrl = metadata.url;
   const url = sourceUrl ? new URL(sourceUrl) : null;
   const heading = normalizeText($('h1').first().text());
   const totalMatch = heading.match(/Найден[а-яё]*\s+([\d\s]+)\s+ваканс/iu);
   const source = {
     file,
     url: sourceUrl,
-    saved_date: metadata.match(/^\s*saved date:\s*(.+)/m)?.[1].trim() ?? null,
+    saved_date: metadata.saved_date,
     heading,
     query: url?.searchParams.get('text') ?? null,
     page: url ? Number(url.searchParams.get('page') ?? 0) + 1 : null,
@@ -130,7 +235,15 @@ export function mergePages(pages) {
 export async function parseFiles(files) {
   const pages = [];
   for (const file of files) {
-    pages.push(parseSearchPage(await readFile(file, 'utf8'), file));
+    const html = await readFile(file, 'utf8');
+    const $ = load(html);
+    // Адрес помогает распознать даже неполную вакансию и не принять рекомендации за выдачу.
+    const isVacancy = $('[data-qa="vacancy-title"]').length
+      || vacancyId($('link[rel="canonical"]').attr('href'))
+      || vacancyId(singleFileMetadata(html).url);
+    pages.push(isVacancy
+      ? parseVacancyPage(html, file, $)
+      : parseSearchPage(html, file, $));
   }
   return mergePages(pages);
 }
