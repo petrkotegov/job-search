@@ -1,0 +1,17 @@
+{
+  "name": "job-search-tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Инструменты для обработки локальных материалов поиска работы",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "parse:hh": "node scripts/parse-hh.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "cheerio": "1.2.0"
+  }
+}
