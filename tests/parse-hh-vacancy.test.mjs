@@ -116,6 +116,65 @@ test('останавливает разбор без обязательных п
   assert.equal(parseVacancyPage(noCanonical, 'saved-url.html').vacancies[0].id, '501');
 });
 
+// Региональные canonical встречаются в ответе hh.kz; SingleFile для таких HTML не нужен.
+test('разбирает обычный HTML региональных сайтов HH без комментария SingleFile', () => {
+  for (const host of ['hh.kz', 'tashkent.hh.uz', 'rabota.by',
+    'bishkek.headhunter.kg', 'tbilisi.headhunter.ge', 'baku.hh1.az']) {
+    const html = vacancyPage().replace(/<!-- Page saved with SingleFile[\s\S]*?-->/, '')
+      .replace('spb.hh.ru', host);
+    const page = parseVacancyPage(html, 'downloaded.html');
+    assert.equal(page.vacancies[0].id, '501');
+    assert.equal(page.vacancies[0].url, 'https://hh.ru/vacancy/501');
+    assert.equal(page.vacancies[0].employer_url, `https://${host}/employer/42`);
+    assert.equal(page.source.url, `https://${host}/vacancy/501`);
+    assert.equal(page.source.saved_date, null);
+    assert.match(page.vacancies[0].description, /Метрики/);
+  }
+  const foreign = vacancyPage().replace(/<!-- Page saved with SingleFile[\s\S]*?-->/, '')
+    .replace('spb.hh.ru', 'hh.kz.other.example');
+  assert.throws(() => parseVacancyPage(foreign, 'foreign.html'), /нет ID/);
+});
+
+// HH иногда присылает JSON для клиентского рендера вместо готовых элементов страницы.
+test('читает полную вакансию из InitialState, когда HH не прислал видимый DOM', () => {
+  const state = {
+    vacancyView: { vacancyFull: { vacancy: { vacancyId: 501, name: 'SRE из JSON',
+      description: '<p>Мониторинг</p><ul><li>Метрики &amp; алерты</li></ul>',
+      company: { id: 42, name: 'Пример' }, keySkills: ['PromQL'],
+      compensation: { from: 300000, to: 400000, currencyCode: 'RUR', mode: 'MONTH', gross: false },
+      employmentForm: 'FULL', workScheduleByDays: ['FIVE_ON_TWO_OFF'], workingHours: ['HOURS_8'],
+      workFormats: ['REMOTE', 'HYBRID'], civilLawContracts: [], acceptLaborContract: false,
+    } }, translations: { workExperience: 'более 6 лет' } },
+    vacancyFieldsDictionary: { employmentForm: [{ id: 'FULL', text: 'Полная' }],
+      workScheduleByDays: [{ id: 'FIVE_ON_TWO_OFF', text: '5/2' }],
+      workingHours: [{ id: 'HOURS_8', text: '8' }], mode: [{ id: 'MONTH', text: 'За месяц' }],
+      workFormats: [{ id: 'REMOTE', text: 'Удалённо' }, { id: 'HYBRID', text: 'Гибрид' }] },
+    applicationLdJSON: JSON.stringify({ '@type': 'JobPosting', datePosted: '2030-01-01',
+      jobLocation: { address: { addressLocality: 'Тестовый город' } } }),
+  };
+  const template = `<template id="HH-Lux-InitialState">${JSON.stringify(state)
+    .replaceAll('&', '&amp;').replaceAll('<', '&lt;')}</template>`;
+  const html = `<link rel="canonical" href="https://hh.kz/vacancy/501">${template}`;
+  const page = parseVacancyPage(html, 'client-rendered.html');
+  const vacancy = page.vacancies[0];
+  assert.equal(vacancy.id, '501');
+  assert.equal(vacancy.title, 'SRE из JSON');
+  assert.equal(vacancy.salary, 'от 300 000 до 400 000 ₽ за месяц на руки');
+  assert.equal(vacancy.experience, 'более 6 лет');
+  assert.equal(vacancy.employment, 'Полная');
+  assert.equal(vacancy.schedule, 'График: 5/2');
+  assert.equal(vacancy.working_hours, 'Рабочие часы: 8');
+  assert.equal(vacancy.work_format, 'Формат работы: Удалённо, Гибрид');
+  assert.equal(vacancy.hiring_format, null);
+  assert.equal(vacancy.location, 'Тестовый город');
+  assert.equal(vacancy.published_at, '2030-01-01');
+  assert.deepEqual(vacancy.skills, ['PromQL']);
+  assert.match(vacancy.description, /- Метрики & алерты/);
+  assert.equal(page.source.data_source, 'initial_state');
+  assert.throws(() => parseVacancyPage(html.replace('vacancy/501', 'vacancy/502'), 'wrong-id.html'), /ID.*различаются/);
+  assert.equal(parseVacancyPage(vacancyPage() + template, 'visible.html').vacancies[0].title, 'SRE & Observability');
+});
+
 // Интеграционный сценарий проверяет выбор типа страницы и защиту готового JSON при ошибке.
 test('CLI разбирает полную вакансию и не перезаписывает результат при неполном исходнике', async () => {
   const temporaryRoot = process.env.CODEX_THREAD_ID
