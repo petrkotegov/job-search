@@ -57,12 +57,12 @@ function jobMetadata($, file, warnings) {
   return {};
 }
 
-// Проверяем адрес страницы вакансии, включая региональные поддомены HH.
+// Проверяем адрес вакансии, включая встречающиеся в HTML из Казахстана домены HH.
 function vacancyId(href) {
   if (!href) return null;
   try {
     const url = new URL(href, 'https://hh.ru');
-    return /^https?:$/.test(url.protocol) && /(^|\.)hh\.ru$/i.test(url.hostname)
+    return /^https?:$/.test(url.protocol) && /(^|\.)hh\.(ru|kz|uz)$/i.test(url.hostname)
       ? url.pathname.match(/^\/vacancy\/(\d+)\/?$/)?.[1] ?? null
       : null;
   } catch {
@@ -105,7 +105,7 @@ export function parseVacancyPage(html, file, $ = load(html)) {
     url: `https://hh.ru/vacancy/${id}`,
     title,
     employer: normalizeText(employer.text()) || null,
-    employer_url: employerHref ? new URL(employerHref, metadata.url ?? 'https://hh.ru').href : null,
+    employer_url: employerHref ? new URL(employerHref, metadata.url ?? canonical ?? 'https://hh.ru').href : null,
     salary,
     experience: field('vacancy-experience'),
     location: job.jobLocation?.address?.addressLocality ?? null,
@@ -122,7 +122,8 @@ export function parseVacancyPage(html, file, $ = load(html)) {
     sources: [{ file, position: 1 }],
   };
   return {
-    source: { file, ...metadata, page_type: 'vacancy', heading: title, card_count: 1 },
+    source: { file, ...metadata, url: metadata.url ?? canonical ?? null,
+      page_type: 'vacancy', heading: title, card_count: 1 },
     vacancies: [vacancy],
     warnings,
   };

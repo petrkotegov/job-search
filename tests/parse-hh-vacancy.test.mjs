@@ -116,6 +116,24 @@ test('останавливает разбор без обязательных п
   assert.equal(parseVacancyPage(noCanonical, 'saved-url.html').vacancies[0].id, '501');
 });
 
+// Региональные canonical встречаются в ответе hh.kz; SingleFile для таких HTML не нужен.
+test('разбирает обычный HTML hh.kz и hh.uz без комментария SingleFile', () => {
+  for (const host of ['hh.kz', 'tashkent.hh.uz']) {
+    const html = vacancyPage().replace(/<!-- Page saved with SingleFile[\s\S]*?-->/, '')
+      .replace('spb.hh.ru', host);
+    const page = parseVacancyPage(html, 'downloaded.html');
+    assert.equal(page.vacancies[0].id, '501');
+    assert.equal(page.vacancies[0].url, 'https://hh.ru/vacancy/501');
+    assert.equal(page.vacancies[0].employer_url, `https://${host}/employer/42`);
+    assert.equal(page.source.url, `https://${host}/vacancy/501`);
+    assert.equal(page.source.saved_date, null);
+    assert.match(page.vacancies[0].description, /Метрики/);
+  }
+  const foreign = vacancyPage().replace(/<!-- Page saved with SingleFile[\s\S]*?-->/, '')
+    .replace('spb.hh.ru', 'hh.kz.other.example');
+  assert.throws(() => parseVacancyPage(foreign, 'foreign.html'), /нет ID/);
+});
+
 // Интеграционный сценарий проверяет выбор типа страницы и защиту готового JSON при ошибке.
 test('CLI разбирает полную вакансию и не перезаписывает результат при неполном исходнике', async () => {
   const temporaryRoot = process.env.CODEX_THREAD_ID
