@@ -117,8 +117,9 @@ test('останавливает разбор без обязательных п
 });
 
 // Региональные canonical встречаются в ответе hh.kz; SingleFile для таких HTML не нужен.
-test('разбирает обычный HTML hh.kz и hh.uz без комментария SingleFile', () => {
-  for (const host of ['hh.kz', 'tashkent.hh.uz']) {
+test('разбирает обычный HTML региональных сайтов HH без комментария SingleFile', () => {
+  for (const host of ['hh.kz', 'tashkent.hh.uz', 'rabota.by',
+    'bishkek.headhunter.kg', 'tbilisi.headhunter.ge', 'baku.hh1.az']) {
     const html = vacancyPage().replace(/<!-- Page saved with SingleFile[\s\S]*?-->/, '')
       .replace('spb.hh.ru', host);
     const page = parseVacancyPage(html, 'downloaded.html');

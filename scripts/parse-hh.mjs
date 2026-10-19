@@ -57,12 +57,12 @@ function jobMetadata($, file, warnings) {
   return {};
 }
 
-// Проверяем адрес вакансии, включая встречающиеся в HTML из Казахстана домены HH.
+// Проверяем адрес вакансии на доменах группы HH, включая региональные поддомены.
 function vacancyId(href) {
   if (!href) return null;
   try {
     const url = new URL(href, 'https://hh.ru');
-    return /^https?:$/.test(url.protocol) && /(^|\.)hh\.(ru|kz|uz)$/i.test(url.hostname)
+    return /^https?:$/.test(url.protocol) && /(^|\.)(hh\.(ru|kz|uz)|hh1\.az|rabota\.by|headhunter\.(ge|kg))$/i.test(url.hostname)
       ? url.pathname.match(/^\/vacancy\/(\d+)\/?$/)?.[1] ?? null
       : null;
   } catch {
