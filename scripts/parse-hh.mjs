@@ -70,6 +70,71 @@ function vacancyId(href) {
   }
 }
 
+// Форматируем явно заданную зарплату InitialState без догадок о налогах или периоде.
+function initialStateSalary(compensation, state) {
+  if (!compensation || compensation.noCompensation) return null;
+  const from = compensation.perModeFrom ?? compensation.from;
+  const to = compensation.perModeTo ?? compensation.to;
+  if (from == null && to == null) return null;
+  const number = new Intl.NumberFormat('ru-RU');
+  const currency = state.currencies?.list?.find((item) => item.code === compensation.currencyCode)?.name
+    ?? (compensation.currencyCode === 'RUR' ? '₽' : compensation.currencyCode);
+  const mode = state.vacancyFieldsDictionary?.mode?.find((item) => item.id === compensation.mode)?.text;
+  return [from != null ? `от ${number.format(from)}` : null,
+    to != null ? `до ${number.format(to)}` : null, currency,
+    mode?.toLocaleLowerCase('ru-RU'),
+    compensation.gross === true ? 'до вычета налогов' : compensation.gross === false ? 'на руки' : null,
+  ].filter(Boolean).join(' ');
+}
+
+// В HTML без готового DOM читаем полную вакансию из встроенного JSON, без запуска JavaScript.
+function restoreInitialState($, file, expectedId) {
+  const template = $('#HH-Lux-InitialState').first();
+  if (!template.length) return false;
+  let state;
+  try { state = JSON.parse(template.text()); }
+  catch { throw new Error(`${file}: повреждён JSON InitialState.`); }
+  const vacancy = state.vacancyView?.vacancyFull?.vacancy;
+  if (!vacancy?.name || !vacancy.description) return false;
+  if (String(vacancy.vacancyId) !== expectedId) {
+    throw new Error(`${file}: ID вакансии в InitialState и адресе страницы различаются.`);
+  }
+  const dictionary = state.vacancyFieldsDictionary ?? {};
+  // Используем подписи из того же HTML, а неизвестные перечисления оставляем как есть.
+  const labels = (name, values) => (Array.isArray(values) ? values : values ? [values] : [])
+    .map((value) => dictionary[name]?.find((item) => item.id === value)?.text ?? value).join(', ');
+  const container = $('<section>');
+  // Создаём промежуточные узлы только в памяти, чтобы сохранить общий путь разбора полей.
+  const field = (qa, value) => {
+    if (!value) return;
+    container.append($('<div>').attr('data-qa', qa).text(value));
+  };
+  field('vacancy-title', vacancy.name);
+  container.append($('<div>').attr('data-qa', 'vacancy-description').html(vacancy.description));
+  const company = $('<a>').attr('data-qa', 'vacancy-company-name').text(vacancy.company?.name ?? '');
+  if (vacancy.company?.id) company.attr('href', `/employer/${vacancy.company.id}`);
+  container.append(company);
+  field('vacancy-salary', initialStateSalary(vacancy.compensation, state));
+  field('vacancy-experience', state.vacancyView?.translations?.workExperience);
+  field('vacancy-view-raw-address', vacancy.address?.displayName ?? vacancy.address?.city);
+  field('common-employment-text', labels('employmentForm', vacancy.employmentForm));
+  const contracts = [vacancy.acceptLaborContract ? 'Трудовой договор' : null,
+    labels('civilLawContract', vacancy.civilLawContracts)].filter(Boolean).join(', ');
+  field('vacancy-hiring-formats', contracts);
+  const schedule = labels('workScheduleByDays', vacancy.workScheduleByDays);
+  const hours = labels('workingHours', vacancy.workingHours);
+  const formats = labels('workFormats', vacancy.workFormats);
+  field('work-schedule-by-days-text', schedule ? `График: ${schedule}` : null);
+  field('working-hours-text', hours ? `Рабочие часы: ${hours}` : null);
+  field('work-formats-text', formats ? `Формат работы: ${formats}` : null);
+  for (const skill of vacancy.keySkills ?? []) field('skills-element', skill);
+  if (state.applicationLdJSON) {
+    container.append($('<script>').attr('type', 'application/ld+json').text(state.applicationLdJSON));
+  }
+  $.root().append(container);
+  return true;
+}
+
 // Разбираем одну полную вакансию; рекомендации и личные элементы страницы не включаем.
 export function parseVacancyPage(html, file, $ = load(html)) {
   const metadata = singleFileMetadata(html);
@@ -77,6 +142,9 @@ export function parseVacancyPage(html, file, $ = load(html)) {
   const canonicalId = vacancyId(canonical);
   const savedId = vacancyId(metadata.url);
   const id = canonicalId ?? savedId;
+  const hasVisibleFields = $('[data-qa="vacancy-title"]').first().text().trim()
+    && $('[data-qa="vacancy-description"]').first().text().trim();
+  const restored = !hasVisibleFields && id ? restoreInitialState($, file, id) : false;
   const title = normalizeText($('[data-qa="vacancy-title"]').first().text());
   const description = descriptionText($('[data-qa="vacancy-description"]').first()[0])
     .replace(/[\u200B\uFEFF]/gu, '').split('\n').map(normalizeText).join('\n')
@@ -123,6 +191,7 @@ export function parseVacancyPage(html, file, $ = load(html)) {
   };
   return {
     source: { file, ...metadata, url: metadata.url ?? canonical ?? null,
+      ...(restored ? { data_source: 'initial_state' } : {}),
       page_type: 'vacancy', heading: title, card_count: 1 },
     vacancies: [vacancy],
     warnings,

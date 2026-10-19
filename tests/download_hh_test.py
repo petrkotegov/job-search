@@ -1,6 +1,7 @@
 """Проверяем остановку загрузчика без запросов к HH."""
 
 import importlib.util
+import html
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -79,6 +80,17 @@ class DownloadTest(unittest.TestCase):
         self.assertEqual(state["saved"], 1)
         self.assertEqual(requests, 2)
         self.assertEqual(sleeps, 1)
+
+    def test_accepts_full_vacancy_inside_initial_state(self):
+        """Полный JSON внутри HTML достаточен для сохранения без запуска браузера."""
+        state = {"vacancyView": {"vacancyFull": {"vacancy": {
+            "vacancyId": 501, "name": "SRE", "description": "<p>Метрики</p>"}}}}
+        page = '<template id="HH-Lux-InitialState">' + html.escape(json.dumps(state)) + '</template>'
+        result = downloader.inspect_page(page, "501")
+        self.assertEqual(result["title"], "SRE")
+        self.assertEqual(result["data_source"], "initial_state")
+        with self.assertRaisesRegex(ValueError, "ID"):
+            downloader.inspect_page(page, "502")
 
 
 if __name__ == "__main__":

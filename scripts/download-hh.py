@@ -19,6 +19,8 @@ class PageMetadata(HTMLParser):
         super().__init__()
         self.scripts = []
         self.current = None
+        self.state_current = None
+        self.initial_state = ""
         self.qa = set()
         self.canonical = None
 
@@ -28,6 +30,8 @@ class PageMetadata(HTMLParser):
         self.qa.add(attrs.get("data-qa"))
         if tag == "script" and attrs.get("type") == "application/ld+json":
             self.current = []
+        if tag == "template" and attrs.get("id") == "HH-Lux-InitialState":
+            self.state_current = []
         if tag == "link" and attrs.get("rel") == "canonical":
             self.canonical = attrs.get("href")
 
@@ -35,12 +39,17 @@ class PageMetadata(HTMLParser):
         # HTMLParser отдаёт содержимое script без изменения JSON.
         if self.current is not None:
             self.current.append(data)
+        if self.state_current is not None:
+            self.state_current.append(data)
 
     def handle_endtag(self, tag):
         # Сохраняем каждый JSON-LD отдельно.
         if tag == "script" and self.current is not None:
             self.scripts.append("".join(self.current))
             self.current = None
+        if tag == "template" and self.state_current is not None:
+            self.initial_state = "".join(self.state_current)
+            self.state_current = None
 
 
 def inspect_page(html, vacancy_id):
@@ -64,6 +73,15 @@ def inspect_page(html, vacancy_id):
                 raise ValueError("В HTML отсутствует видимое описание вакансии")
             return {"title": job["title"], "canonical_url": metadata.canonical,
                     "description_html_length": len(job["description"])}
+    # Некоторые ответы HH содержат полную вакансию в JSON для клиентского рендера.
+    if metadata.initial_state:
+        state = json.loads(metadata.initial_state)
+        vacancy = state.get("vacancyView", {}).get("vacancyFull", {}).get("vacancy", {})
+        if str(vacancy.get("vacancyId")) != str(vacancy_id):
+            raise ValueError("ID вакансии в InitialState не совпадает с запрошенным")
+        if vacancy.get("name") and vacancy.get("description", "").strip():
+            return {"title": vacancy["name"], "canonical_url": metadata.canonical,
+                    "description_html_length": len(vacancy["description"]), "data_source": "initial_state"}
     raise ValueError("Не найдена полная вакансия: возможна капча или страница ошибки")
 
 
